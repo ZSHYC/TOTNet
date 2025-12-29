@@ -12,8 +12,8 @@ from tqdm import tqdm
 # from model.propose_model import build_detector
 from model.tracknet import build_TrackerNet, build_TrackNetV2
 from model.wasb import build_wasb
-from PhysicsInformedDeformableAttentionNetwork.src.model.TOTNet import build_motion_model_light
-from PhysicsInformedDeformableAttentionNetwork.src.model.TOTNet_OF import build_motion_model_light_opticalflow
+from model.TOTNet import build_motion_model_light
+from model.TOTNet_OF import build_motion_model_light_opticalflow
 from model.monoTrack import build_monoTrack
 from model.TTNet import build_TTNet
 from model.model_utils import make_data_parallel, get_num_parameters
@@ -33,7 +33,11 @@ from sklearn.model_selection import train_test_split
 def main():
     configs = parse_configs()
 
-    rank = int(os.environ.get("RANK", 0))  # Default to 0 if RANK is not set
+    # 在单GPU模式下，不依赖环境变量
+    if configs.gpu_idx is not None and not configs.distributed:
+        rank = 0
+    else:
+        rank = int(os.environ.get("RANK", 0))  # Default to 0 if RANK is not set
 
     if torch.cuda.is_available() and rank==0:
         print(f"Number of GPUs: {torch.cuda.device_count()}")
@@ -63,19 +67,23 @@ def main():
 
 
 def main_worker(configs):
-
-    configs.rank = int(os.environ["RANK"])
-    configs.world_size = int(os.environ["WORLD_SIZE"])
-    # Set the GPU for this process
-    configs.gpu_idx = int(os.environ["LOCAL_RANK"])  # Rank within the current node
-    configs.device = torch.device(f'cuda:{configs.gpu_idx}')
-
-    print(f"Running on rank {configs.rank}, using GPU {configs.gpu_idx}")
+    # 设置默认值，以防环境变量未设置
+    if configs.gpu_idx is not None and not configs.distributed:
+        # 单GPU模式
+        configs.rank = 0
+        configs.world_size = 1
+        configs.device = torch.device(f'cuda:{configs.gpu_idx}')
+    else:
+        # 分布式训练模式
+        configs.rank = int(os.environ.get("RANK", 0))
+        configs.world_size = int(os.environ.get("WORLD_SIZE", 1))
+        # Set the GPU for this process
+        configs.gpu_idx = int(os.environ.get("LOCAL_RANK", 0))  # Rank within the current node
+        configs.device = torch.device(f'cuda:{configs.gpu_idx}')
 
     if configs.gpu_idx is not None:
         print("Use GPU: {} for training".format(configs.gpu_idx))
         configs.device = torch.device('cuda:{}'.format(configs.gpu_idx))
-
 
     if configs.distributed:
         dist.init_process_group(
